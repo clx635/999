@@ -1,0 +1,78 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare project from zip if needed
+        run: |
+          if [ ! -d "hc06_android" ]; then
+            if [ -f "hc06_android.zip" ]; then
+              unzip -q hc06_android.zip
+            else
+              ZIP_FILE=$(ls *.zip | head -n 1 || true)
+              if [ -n "$ZIP_FILE" ]; then
+                unzip -q "$ZIP_FILE"
+              fi
+            fi
+          fi
+          if [ ! -d "hc06_android" ]; then
+            DIR_WITH_SETTINGS=$(find . -maxdepth 2 -type f -name "settings.gradle" -printf "%h\n" | head -n 1 || true)
+            if [ -n "$DIR_WITH_SETTINGS" ]; then
+              mv "$DIR_WITH_SETTINGS" hc06_android
+            fi
+          fi
+          echo "== Repo root =="
+          ls -la
+          echo "== hc06_android tree =="
+          ls -la hc06_android || true
+          ls -la hc06_android/app || true
+          test -f hc06_android/settings.gradle || (echo "settings.gradle not found, build will fail" && exit 1)
+          test -f hc06_android/app/build.gradle || (echo "app/build.gradle not found, build will fail" && exit 1)
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          components: platform-tools
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+   
+      - name: Install Gradle 8.7
+        run: |
+          curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle.zip -d $HOME
+          echo "GRADLE_HOME=$HOME/gradle-8.7" >> $GITHUB_ENV
+          echo "$HOME/gradle-8.7/bin" >> $GITHUB_PATH
+          gradle -v
+
+      - name: Build Debug APK
+        working-directory: hc06_android
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hc06-terminal-debug-apk
+          path: hc06_android/app/build/outputs/apk/debug/app-debug.apk
